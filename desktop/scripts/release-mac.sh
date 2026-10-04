@@ -9,6 +9,8 @@
 #        xcrun notarytool store-credentials trusco-notary --apple-id <your Apple ID> --team-id <your Team ID>
 #
 # Then:  ./scripts/release-mac.sh            (from the desktop folder; writes ../releases/*_universal.dmg)
+#        ./scripts/release-mac.sh --dmg-only (redo only the DMG step, e.g. if the Mac locked mid-run:
+#                                             the saved notary credentials can't be read while locked)
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -21,7 +23,7 @@ if [[ -z "$IDENTITY" ]]; then
   exit 1
 fi
 xcrun notarytool history --keychain-profile "$PROFILE" >/dev/null 2>&1 || {
-  echo "Notarisation profile '$PROFILE' not found. Run: xcrun notarytool store-credentials $PROFILE --apple-id <Apple ID> --team-id <your Team ID>" >&2
+  echo "Notarisation profile '$PROFILE' not readable (is the Mac locked?) or not set up. Run: xcrun notarytool store-credentials $PROFILE --apple-id <Apple ID> --team-id <your Team ID>" >&2
   exit 1
 }
 
@@ -34,14 +36,19 @@ DMG="$OUT/TrusCo Tracker_${VERSION}_universal.dmg"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
-echo "→ Building (Apple Silicon + Intel) and signing with: $IDENTITY"
-rustup target add aarch64-apple-darwin x86_64-apple-darwin >/dev/null
-APPLE_SIGNING_IDENTITY="$IDENTITY" npx tauri build --bundles app --target "$TARGET"
+if [[ "${1:-}" == "--dmg-only" ]]; then
+  # Re-run just the packaging after an interrupted run (the app is already notarised).
+  xcrun stapler validate "$APP" >/dev/null || { echo "The app isn't notarised yet; run without --dmg-only." >&2; exit 1; }
+else
+  echo "→ Building (Apple Silicon + Intel) and signing with: $IDENTITY"
+  rustup target add aarch64-apple-darwin x86_64-apple-darwin >/dev/null
+  APPLE_SIGNING_IDENTITY="$IDENTITY" npx tauri build --bundles app --target "$TARGET"
 
-echo "→ Notarising the app"
-ditto -c -k --keepParent "$APP" "$WORK/app.zip"
-xcrun notarytool submit "$WORK/app.zip" --keychain-profile "$PROFILE" --wait
-xcrun stapler staple "$APP"
+  echo "→ Notarising the app"
+  ditto -c -k --keepParent "$APP" "$WORK/app.zip"
+  xcrun notarytool submit "$WORK/app.zip" --keychain-profile "$PROFILE" --wait
+  xcrun stapler staple "$APP"
+fi
 
 echo "→ Packaging the DMG"
 mkdir -p "$WORK/dmg" "$OUT"
