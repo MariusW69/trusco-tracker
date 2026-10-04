@@ -86,6 +86,8 @@ Networking uses rustls with the operating system's certificate store. This means
 - Each run uploads `TrusCo-Tracker-Windows`, containing the `.msi` and the setup `.exe`, as an artifact. Tag runs also attach both to a draft release.
 - The installers are unsigned for now, so Windows SmartScreen shows "More info → Run anyway". Code signing (for example Azure Trusted Signing) removes that warning.
 
+TrusCo's Download buttons link to `…/releases/latest/download/TrusCo-Tracker-mac.dmg` and `…/TrusCo-Tracker-windows-setup.exe`. Every release must include those two fixed-name files; the workflow and `release-mac.sh` produce them.
+
 **macOS: signed and notarised locally**, so it opens on any Mac without warnings:
 
 ```bash

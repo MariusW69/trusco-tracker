@@ -45,6 +45,12 @@ jobs:
       - name: Build installers
         run: npx tauri build --bundles msi,nsis
 
+      # Fixed name so .../releases/latest/download/TrusCo-Tracker-windows-setup.exe always
+      # points at the newest version (TrusCo's Download button uses it).
+      - name: Add stable download name
+        shell: bash
+        run: cp src-tauri/target/release/bundle/nsis/*_x64-setup.exe src-tauri/target/release/bundle/nsis/TrusCo-Tracker-windows-setup.exe
+
       - name: Upload installers
         uses: actions/upload-artifact@v4
         with:

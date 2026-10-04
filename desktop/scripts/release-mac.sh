@@ -65,4 +65,8 @@ xcrun stapler staple "$DMG"
 echo "→ Gatekeeper check"
 spctl --assess --type open --context context:primary-signature -v "$DMG"
 spctl --assess --type execute -v "$APP"
+# Fixed name so .../releases/latest/download/TrusCo-Tracker-mac.dmg always points at the newest version.
+cp "$DMG" "$OUT/TrusCo-Tracker-mac.dmg"
 echo "Done: $DMG"
+echo "Attach to the GitHub release with:"
+echo "  gh release upload v$VERSION \"$DMG\" \"$OUT/TrusCo-Tracker-mac.dmg\" --clobber"
