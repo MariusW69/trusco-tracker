@@ -1,0 +1,30 @@
+[package]
+name = "tracker-core"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+# rustls + the OS certificate store. The macOS system TLS stack (native-tls) takes 5-30 s
+# to handshake with trusco.app's edge; native-tls is kept only for `cargo check` of the
+# Windows code from a Mac, where aws-lc can't be cross-compiled.
+default = ["rustls"]
+rustls = ["reqwest/rustls"]
+native-tls = ["reqwest/native-tls"]
+
+[dependencies]
+chrono = { version = "0.4.45", features = ["serde"] }
+keyring = { version = "3", features = ["apple-native", "windows-native"] }
+reqwest = { version = "0.13.5", default-features = false, features = ["blocking", "json"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+uuid = { version = "1.27.0", features = ["v4"] }
+zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+core-foundation = "0.10.1"
+objc2 = "0.6.4"
+objc2-app-kit = "0.3.2"
+objc2-foundation = "0.3.2"
+
+[target."cfg(windows)".dependencies]
+windows = { version = "0.62.2", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_System_Threading", "Win32_UI_Input_KeyboardAndMouse", "Win32_System_SystemInformation"] }

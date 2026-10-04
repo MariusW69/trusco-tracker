@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# Builds a signed + notarised TrusCo Tracker DMG that opens on any Mac without warnings.
+#
+# One-time setup:
+#   1. A "Developer ID Application" certificate in your login keychain
+#      (Xcode → Settings → Accounts → Manage Certificates → + → Developer ID Application).
+#   2. Notarisation credentials stored in the keychain (asks for an app-specific password
+#      from appleid.apple.com → Sign-In and Security → App-Specific Passwords):
+#        xcrun notarytool store-credentials trusco-notary --apple-id <your Apple ID> --team-id <your Team ID>
+#
+# Then:  ./scripts/release-mac.sh            (from the desktop folder)
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+export PATH="$HOME/.cargo/bin:$PATH"
+PROFILE="${NOTARY_PROFILE:-trusco-notary}"
+
+IDENTITY="${APPLE_SIGNING_IDENTITY:-$(security find-identity -v -p codesigning | sed -nE 's/.*"(Developer ID Application: [^"]+)".*/\1/p' | head -1)}"
+if [[ -z "$IDENTITY" ]]; then
+  echo "No 'Developer ID Application' certificate found in the keychain (see the setup notes at the top)." >&2
+  exit 1
+fi
+xcrun notarytool history --keychain-profile "$PROFILE" >/dev/null 2>&1 || {
+  echo "Notarisation profile '$PROFILE' not found. Run: xcrun notarytool store-credentials $PROFILE --apple-id <Apple ID> --team-id <your Team ID>" >&2
+  exit 1
+}
+
+VERSION="$(node -p "require('./src-tauri/tauri.conf.json').version")"
+ARCH="$(uname -m)"; [[ "$ARCH" == "arm64" ]] && ARCH="aarch64"
+OUT="../releases"
+APP="src-tauri/target/release/bundle/macos/TrusCo Tracker.app"
+DMG="$OUT/TrusCo Tracker_${VERSION}_${ARCH}.dmg"
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
+
+echo "→ Building and signing with: $IDENTITY"
+APPLE_SIGNING_IDENTITY="$IDENTITY" npx tauri build --bundles app
+
+echo "→ Notarising the app"
+ditto -c -k --keepParent "$APP" "$WORK/app.zip"
+xcrun notarytool submit "$WORK/app.zip" --keychain-profile "$PROFILE" --wait
+xcrun stapler staple "$APP"
+
+echo "→ Packaging the DMG"
+mkdir -p "$WORK/dmg" "$OUT"
+cp -R "$APP" "$WORK/dmg/"
+ln -s /Applications "$WORK/dmg/Applications"
+rm -f "$DMG"
+hdiutil create -volname "TrusCo Tracker" -srcfolder "$WORK/dmg" -ov -format UDZO "$DMG" >/dev/null
+codesign --sign "$IDENTITY" --timestamp "$DMG"
+
+echo "→ Notarising the DMG"
+xcrun notarytool submit "$DMG" --keychain-profile "$PROFILE" --wait
+xcrun stapler staple "$DMG"
+
+echo "→ Gatekeeper check"
+spctl --assess --type open --context context:primary-signature -v "$DMG"
+spctl --assess --type execute -v "$APP"
+echo "Done: $DMG"
