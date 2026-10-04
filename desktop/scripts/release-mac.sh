@@ -8,7 +8,7 @@
 #      from appleid.apple.com → Sign-In and Security → App-Specific Passwords):
 #        xcrun notarytool store-credentials trusco-notary --apple-id <your Apple ID> --team-id <your Team ID>
 #
-# Then:  ./scripts/release-mac.sh            (from the desktop folder)
+# Then:  ./scripts/release-mac.sh            (from the desktop folder; writes ../releases/*_universal.dmg)
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -26,15 +26,17 @@ xcrun notarytool history --keychain-profile "$PROFILE" >/dev/null 2>&1 || {
 }
 
 VERSION="$(node -p "require('./src-tauri/tauri.conf.json').version")"
-ARCH="$(uname -m)"; [[ "$ARCH" == "arm64" ]] && ARCH="aarch64"
 OUT="../releases"
-APP="src-tauri/target/release/bundle/macos/TrusCo Tracker.app"
-DMG="$OUT/TrusCo Tracker_${VERSION}_${ARCH}.dmg"
+# One universal build runs natively on Apple Silicon and Intel Macs.
+TARGET="universal-apple-darwin"
+APP="src-tauri/target/$TARGET/release/bundle/macos/TrusCo Tracker.app"
+DMG="$OUT/TrusCo Tracker_${VERSION}_universal.dmg"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
-echo "→ Building and signing with: $IDENTITY"
-APPLE_SIGNING_IDENTITY="$IDENTITY" npx tauri build --bundles app
+echo "→ Building (Apple Silicon + Intel) and signing with: $IDENTITY"
+rustup target add aarch64-apple-darwin x86_64-apple-darwin >/dev/null
+APPLE_SIGNING_IDENTITY="$IDENTITY" npx tauri build --bundles app --target "$TARGET"
 
 echo "→ Notarising the app"
 ditto -c -k --keepParent "$APP" "$WORK/app.zip"

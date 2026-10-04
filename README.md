@@ -90,7 +90,7 @@ Networking uses rustls with the operating system's certificate store. This means
 
 ```bash
 cd desktop
-./scripts/release-mac.sh               # writes ../releases/TrusCo Tracker_<version>_aarch64.dmg
+./scripts/release-mac.sh               # writes ../releases/TrusCo Tracker_<version>_universal.dmg (Apple Silicon + Intel)
 ```
 
 One-time setup:
