@@ -19,7 +19,7 @@ use tauri_plugin_opener::OpenerExt as _;
 use tracker_core::api::{self, ApiError, BlockPayload};
 use tracker_core::platform::{self, Sampler};
 use tracker_core::store::{Account, Store};
-use tracker_core::{Activity, Block, Engine, Sample, Settings, WindowInfo, secrets};
+use tracker_core::{Activity, Block, Engine, NeverTrack, Sample, Settings, WindowInfo, secrets};
 
 const SAMPLE_EVERY: Duration = Duration::from_secs(5);
 const SYNC_EVERY: Duration = Duration::from_secs(60);
@@ -83,6 +83,7 @@ pub fn run() {
             sync_now,
             open_review,
             remove_block,
+            never_track,
         ])
         .setup(|app| {
             #[cfg(target_os = "macos")]
@@ -438,6 +439,9 @@ struct BlockView {
     match_reason: Option<String>,
     /// approved | discarded | synced | waiting | short
     status: &'static str,
+    /// What "Never track" offers: the app name, and the document/window text (if specific enough).
+    never_track_app: Option<String>,
+    never_track_item: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -502,11 +506,10 @@ fn block_view(b: &Block, cfg: &Settings) -> BlockView {
         _ if b.is_dirty() => "waiting",
         _ => "synced",
     };
-    let info = WindowInfo {
-        app_name: b.app_name.clone(),
-        title: b.window_title.clone(),
-        document_path: b.document_path.clone(),
-        ..Default::default()
+    let info = b.window();
+    let rule_text = |whole_app| match b.never_track_rule(whole_app) {
+        Some(NeverTrack::App(v) | NeverTrack::Keyword(v)) => Some(v),
+        None => None,
     };
     BlockView {
         id: b.id.clone(),
@@ -520,6 +523,8 @@ fn block_view(b: &Block, cfg: &Settings) -> BlockView {
         matter_label: b.matter_label.clone(),
         match_reason: b.match_reason.clone(),
         status,
+        never_track_app: rule_text(true),
+        never_track_item: rule_text(false),
     }
 }
 
@@ -640,6 +645,42 @@ fn remove_block(app: AppHandle, id: String) -> UiState {
         let _ = state.store.save_engine(&s.engine);
     }
     ui_state(&app)
+}
+
+#[derive(Serialize)]
+struct NeverTrackOutcome {
+    state: UiState,
+    rule: NeverTrack,
+    /// Activities removed from this computer.
+    removed: usize,
+    /// Of those, how many TrusCo already has (they can be discarded in Captured Time).
+    already_sent: usize,
+}
+
+/// "Never track" on an activity: excludes its whole app, or just this document/window, from
+/// now on and removes matching activity from this computer. Undo by editing Settings.
+#[tauri::command]
+fn never_track(app: AppHandle, id: String, whole_app: bool) -> Result<NeverTrackOutcome, String> {
+    let state = app.state::<AppState>();
+    let (rule, removed, already_sent) = {
+        let mut guard = state.lock();
+        let s = &mut *guard;
+        let block = s.engine.blocks.iter().find(|b| b.id == id).ok_or("That activity is no longer on this computer")?;
+        let rule = block
+            .never_track_rule(whole_app)
+            .ok_or("This activity has no document or window name to exclude; exclude the whole app instead")?;
+        s.settings.add_never_track(&rule);
+        let (removed, already_sent) = s.engine.drop_excluded(&s.settings);
+        if s.current.as_ref().is_some_and(|w| s.settings.is_excluded(w)) {
+            s.current = None;
+            s.activity = Activity::Excluded;
+        }
+        state.store.save_settings(&s.settings).map_err(|e| e.to_string())?;
+        let _ = state.store.save_engine(&s.engine);
+        (rule, removed, already_sent)
+    };
+    refresh_tray(&app);
+    Ok(NeverTrackOutcome { state: ui_state(&app), rule, removed, already_sent })
 }
 
 // ---------------------------------------------------------------------------

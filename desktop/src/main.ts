@@ -20,6 +20,15 @@ type BlockView = {
   matter_label: string | null;
   match_reason: string | null;
   status: "approved" | "discarded" | "synced" | "waiting" | "short";
+  never_track_app: string | null;
+  never_track_item: string | null;
+};
+
+type NeverTrackOutcome = {
+  state: UiState;
+  rule: { kind: "app" | "keyword"; value: string };
+  removed: number;
+  already_sent: number;
 };
 
 type SettingsView = {
@@ -51,6 +60,10 @@ let state: UiState | null = null;
 let view: "main" | "settings" = "main";
 let busy = false;
 let pairError = "";
+/** Activity whose "Never track" choices are open, and the message shown after choosing. */
+let neverTrackFor: string | null = null;
+let notice: string | null = null;
+let noticeTimer: number | undefined;
 
 const esc = (s: string | null | undefined) =>
   (s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
@@ -98,6 +111,35 @@ function render() {
   if (!state.paired) return renderPair(state);
   if (view === "settings") return renderSettings(state);
   renderMain(state);
+}
+
+function showNotice(text: string) {
+  notice = text;
+  window.clearTimeout(noticeTimer);
+  noticeTimer = window.setTimeout(() => {
+    notice = null;
+    render();
+  }, 10000);
+}
+
+async function neverTrack(id: string, wholeApp: boolean) {
+  busy = true;
+  try {
+    const r = await invoke<NeverTrackOutcome>("never_track", { id, wholeApp });
+    state = r.state;
+    neverTrackFor = null;
+    const what = r.rule.kind === "app" ? r.rule.value : `“${r.rule.value}”`;
+    let text = `TrusCo Tracker won't track ${what} again.`;
+    if (r.removed > 0) text += ` Removed ${r.removed} ${r.removed === 1 ? "activity" : "activities"} from this computer.`;
+    if (r.already_sent > 0)
+      text += ` ${r.already_sent === 1 ? "One was" : `${r.already_sent} were`} already sent: discard ${r.already_sent === 1 ? "it" : "them"} in TrusCo's Captured Time.`;
+    showNotice(`${text} You can undo this in Settings.`);
+  } catch (e) {
+    showNotice(String(e));
+  } finally {
+    busy = false;
+  }
+  render();
 }
 
 // ---------------------------------------------------------------------------
@@ -185,8 +227,24 @@ function statusTag(b: BlockView) {
   }
 }
 
+/** The choices shown after clicking "Never track" on an activity. */
+function neverTrackChoices(b: BlockView) {
+  const sent = b.status === "synced" || b.status === "approved" || b.status === "discarded";
+  return `
+    <div class="never" role="group" aria-label="Never track">
+      <p class="small">Stop tracking from now on:</p>
+      <div class="row wrap">
+        ${b.never_track_item ? `<button data-never-item="${esc(b.id)}" title="Any window or document containing this name">Only “${esc(b.never_track_item)}”</button>` : ""}
+        ${b.never_track_app ? `<button data-never-app="${esc(b.id)}">All of ${esc(b.never_track_app)}</button>` : ""}
+        <button class="link small" id="never-cancel">Cancel</button>
+      </div>
+      ${sent ? `<p class="small muted">This activity was already sent to TrusCo. It's removed here; discard it in Captured Time.</p>` : ""}
+    </div>`;
+}
+
+let lastMainHtml = "";
+
 function renderMain(s: UiState) {
-  app.dataset.view = "main";
   const tracking = s.activity.state === "tracking";
   const pill = s.paused
     ? `<span class="pill off">Paused</span>`
@@ -213,12 +271,14 @@ function renderMain(s: UiState) {
           }
           ${statusTag(b)}
           ${b.status === "short" || b.status === "waiting" ? `<button class="link small" data-remove="${esc(b.id)}">Remove</button>` : ""}
+          ${neverTrackFor === b.id ? "" : `<button class="link small" data-never="${esc(b.id)}">Never track</button>`}
         </div>
+        ${neverTrackFor === b.id ? neverTrackChoices(b) : ""}
       </div>`,
     )
     .join("");
 
-  app.innerHTML = `
+  const html = `
     <div class="row spread">
       <h1>TrusCo Tracker</h1>
       <button class="link" id="settings">Settings</button>
@@ -230,6 +290,7 @@ function renderMain(s: UiState) {
         : ""
     }
     ${s.last_sync_error ? `<div class="banner">${esc(s.last_sync_error)}</div>` : ""}
+    ${notice ? `<div class="banner info" role="status">${esc(notice)}</div>` : ""}
     <section class="card">
       <div class="row spread">${pill}<span class="small muted">Today</span></div>
       <div class="row spread" style="margin-top:8px">
@@ -254,6 +315,11 @@ function renderMain(s: UiState) {
       <div>Synced ${ago(s.last_sync)} · <button class="link small" id="sync">Sync now</button></div>
     </footer>
   `;
+  // The 3-second poll would otherwise replace the buttons under the pointer and swallow clicks.
+  if (app.dataset.view === "main" && html === lastMainHtml) return;
+  app.dataset.view = "main";
+  lastMainHtml = html;
+  app.innerHTML = html;
 
   const on = (id: string, fn: () => void) => app.querySelector(`#${id}`)?.addEventListener("click", fn);
   on("settings", () => {
@@ -267,6 +333,22 @@ function renderMain(s: UiState) {
   on("pinf", () => act(() => invoke("pause", { minutes: null })));
   on("review", () => invoke("open_review"));
   on("sync", () => act(() => invoke("sync_now")));
+  app.querySelectorAll<HTMLButtonElement>("[data-never]").forEach((b) =>
+    b.addEventListener("click", () => {
+      neverTrackFor = b.dataset.never ?? null;
+      render();
+    }),
+  );
+  app.querySelectorAll<HTMLButtonElement>("[data-never-item]").forEach((b) =>
+    b.addEventListener("click", () => neverTrack(b.dataset.neverItem!, false)),
+  );
+  app.querySelectorAll<HTMLButtonElement>("[data-never-app]").forEach((b) =>
+    b.addEventListener("click", () => neverTrack(b.dataset.neverApp!, true)),
+  );
+  on("never-cancel", () => {
+    neverTrackFor = null;
+    render();
+  });
   app.querySelectorAll<HTMLButtonElement>("[data-remove]").forEach((b) =>
     b.addEventListener("click", () => act(() => invoke("remove_block", { id: b.dataset.remove }))),
   );
@@ -295,9 +377,9 @@ function renderSettings(s: UiState) {
         <textarea id="apps" rows="5">${esc(s.settings.excluded_apps.join("\n"))}</textarea>
       </div>
       <div class="field">
-        <label for="keywords">Never track windows whose title contains (one per line)</label>
-        <textarea id="keywords" rows="3">${esc(s.settings.excluded_keywords.join("\n"))}</textarea>
-        <p class="hint">For example your bank's name, or "Personal".</p>
+        <label for="keywords">Never track windows or documents whose name contains (one per line)</label>
+        <textarea id="keywords" rows="4">${esc(s.settings.excluded_keywords.join("\n"))}</textarea>
+        <p class="hint">For example your bank's name, or "Personal". "Never track" on an activity adds to these lists.</p>
       </div>
       <div class="field row">
         <input id="login" type="checkbox" style="width:auto" ${s.launch_at_login ? "checked" : ""} />

@@ -1,6 +1,6 @@
 [package]
 name = "trusco-tracker"
-version = "0.1.0"
+version = "0.1.1"
 description = "TrusCo Tracker: records time per matter for legal billing"
 edition = "2024"
 

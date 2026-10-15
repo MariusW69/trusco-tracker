@@ -9,4 +9,4 @@ pub mod platform;
 pub mod secrets;
 pub mod store;
 
-pub use engine::{Activity, Block, Engine, Sample, Settings, WindowInfo};
+pub use engine::{Activity, Block, Engine, NeverTrack, Sample, Settings, WindowInfo};

@@ -27,7 +27,24 @@ const state: any = {
   launch_at_login: true,
 };
 
+// Mirror of Block::never_track_rule: file name for documents, title without "(3)" counts otherwise.
+for (const b of state.blocks) {
+  b.never_track_app = b.app_name;
+  const item = b.detail.startsWith("/") ? b.detail.split(/[\\/]/).pop() : b.label.replace(/\(\d+\)/g, "").replace(/\s+/g, " ").trim();
+  b.never_track_item = item && item.length >= 3 ? item : null;
+}
+
 const handlers: Record<string, (a: any) => any> = {
+  never_track: (a) => {
+    const blk = state.blocks.find((b: any) => b.id === a.id);
+    const rule = a.wholeApp ? { kind: "app", value: blk.app_name } : { kind: "keyword", value: blk.never_track_item };
+    const hit = (b: any) =>
+      rule.kind === "app" ? b.app_name === rule.value : `${b.label} ${b.detail}`.toLowerCase().includes(rule.value.toLowerCase());
+    const removed = state.blocks.filter(hit);
+    state.blocks = state.blocks.filter((b: any) => !hit(b));
+    (rule.kind === "app" ? state.settings.excluded_apps : state.settings.excluded_keywords).push(rule.value);
+    return { state, rule, removed: removed.length, already_sent: removed.filter((b: any) => b.status !== "short" && b.status !== "waiting").length };
+  },
   get_state: () => state,
   default_device_name: () => "Office MacBook Pro",
   pair: (a) => {

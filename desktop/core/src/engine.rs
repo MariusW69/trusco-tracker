@@ -57,6 +57,35 @@ impl Block {
     pub fn is_dirty(&self) -> bool {
         self.version > self.synced_version
     }
+
+    /// Whether TrusCo has received this block at least once.
+    pub fn was_sent(&self) -> bool {
+        self.synced_version > 0 || self.server_status.is_some()
+    }
+
+    pub fn window(&self) -> WindowInfo {
+        WindowInfo {
+            app_name: self.app_name.clone(),
+            app_bundle: self.app_bundle.clone(),
+            title: self.window_title.clone(),
+            document_path: self.document_path.clone(),
+            document_pages: self.document_pages,
+        }
+    }
+
+    /// The rule "Never track" would add: the whole app, or this document (by file name) /
+    /// this window (by title, minus unread counts such as "(3)"). None if too vague.
+    pub fn never_track_rule(&self, whole_app: bool) -> Option<NeverTrack> {
+        if whole_app {
+            let app = self.app_name.trim();
+            return (!app.is_empty()).then(|| NeverTrack::App(app.to_string()));
+        }
+        let name = match self.document_path.as_deref().map(str::trim).filter(|p| !p.is_empty()) {
+            Some(path) => path.rsplit(['/', '\\']).next().unwrap_or(path).trim().to_string(),
+            None => without_counts(&self.window_title),
+        };
+        (name.chars().count() >= 3).then_some(NeverTrack::Keyword(name))
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -114,11 +143,39 @@ impl Settings {
         if self.excluded_apps.iter().any(|a| !a.trim().is_empty() && app == a.trim().to_lowercase()) {
             return true;
         }
-        let title = w.title.to_lowercase();
-        self.excluded_keywords
-            .iter()
-            .any(|k| !k.trim().is_empty() && title.contains(&k.trim().to_lowercase()))
+        // Keywords match the window title or the document path, so a "never track this
+        // document" rule still applies when the app shows a different title.
+        let title = without_counts(&w.title).to_lowercase();
+        let path = w.document_path.as_deref().unwrap_or_default().to_lowercase();
+        self.excluded_keywords.iter().any(|k| {
+            let raw = k.trim().to_lowercase();
+            let k = without_counts(&raw);
+            !k.is_empty() && (title.contains(&k) || path.contains(&raw))
+        })
     }
+
+    /// Adds a "Never track" rule unless an equivalent one exists. Returns true when added.
+    pub fn add_never_track(&mut self, rule: &NeverTrack) -> bool {
+        let (list, value) = match rule {
+            NeverTrack::App(a) => (&mut self.excluded_apps, a),
+            NeverTrack::Keyword(k) => (&mut self.excluded_keywords, k),
+        };
+        if list.iter().any(|x| x.trim().eq_ignore_ascii_case(value.trim())) {
+            return false;
+        }
+        list.push(value.trim().to_string());
+        true
+    }
+}
+
+/// What "Never track" adds to the settings for an activity.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(tag = "kind", content = "value", rename_all = "snake_case")]
+pub enum NeverTrack {
+    /// Every window of this app.
+    App(String),
+    /// Windows whose title or document path contains this text.
+    Keyword(String),
 }
 
 /// What the tracker did with the latest sample (shown in the tray).
@@ -241,6 +298,20 @@ impl Engine {
         }
     }
 
+    /// Removes blocks the current exclusions cover. Returns (removed, of which TrusCo already has).
+    pub fn drop_excluded(&mut self, cfg: &Settings) -> (usize, usize) {
+        let (mut removed, mut sent) = (0, 0);
+        self.blocks.retain(|b| {
+            let drop = cfg.is_excluded(&b.window());
+            if drop {
+                removed += 1;
+                sent += usize::from(b.was_sent());
+            }
+            !drop
+        });
+        (removed, sent)
+    }
+
     /// Drop old blocks that no longer need syncing.
     pub fn prune(&mut self, now: DateTime<Utc>) {
         let cutoff = now - Duration::days(KEEP_DAYS);
@@ -281,16 +352,28 @@ pub fn block_key(w: &WindowInfo) -> String {
     format!("{}|{}", w.app_name.to_lowercase(), what)
 }
 
-fn normalize_title(title: &str) -> String {
-    let mut t = title.trim().to_lowercase();
-    // "(3) Inbox - Gmail" -> "inbox - gmail"
-    if t.starts_with('(') {
-        if let Some(end) = t.find(") ") {
-            if t[1..end].chars().all(|c| c.is_ascii_digit()) {
-                t = t[end + 2..].to_string();
+/// Drops unread counts like "(3)" anywhere in a title so it stays stable as mail arrives:
+/// "(3) Inbox - Gmail" and "Inbox (12) - a@b.co - Gmail" -> "Inbox - Gmail", "Inbox - a@b.co - Gmail".
+fn without_counts(title: &str) -> String {
+    let mut out = String::with_capacity(title.len());
+    let mut rest = title;
+    while let Some(start) = rest.find('(') {
+        out.push_str(&rest[..start]);
+        let after = &rest[start + 1..];
+        match after.find(')') {
+            Some(end) if end > 0 && after[..end].chars().all(|c| c.is_ascii_digit()) => rest = &after[end + 1..],
+            _ => {
+                out.push('(');
+                rest = after;
             }
         }
     }
+    out.push_str(rest);
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn normalize_title(title: &str) -> String {
+    let mut t = without_counts(title).to_lowercase();
     for suffix in [" — edited", " - edited", " [compatibility mode]", " [read-only]"] {
         if let Some(stripped) = t.strip_suffix(suffix) {
             t = stripped.to_string();
@@ -424,5 +507,74 @@ mod tests {
         assert_eq!(normalize_title("(3) Inbox - Gmail"), "inbox - gmail");
         assert_eq!(normalize_title("Memo — Edited"), "memo");
         assert_eq!(normalize_title("(Draft) Memo"), "(draft) memo");
+        assert_eq!(normalize_title("Inbox (12) - a@b.co - Gmail"), "inbox - a@b.co - gmail");
+        assert_eq!(without_counts("Budget (2025) (v2).xlsx"), "Budget (v2).xlsx");
+        assert_eq!(without_counts("(1)(2) x ( y"), "x ( y");
+    }
+
+    #[test]
+    fn window_rule_survives_unread_count_changes() {
+        let mut e = Engine::default();
+        let mut cfg = Settings::default();
+        let inbox = |n: u32| WindowInfo {
+            app_name: "Google Chrome".into(),
+            title: format!("Inbox ({n}) - attorney@example.co.za - Gmail"),
+            ..Default::default()
+        };
+        tracked(&mut e, &cfg, &inbox(3), 0);
+        let rule = e.blocks[0].never_track_rule(false).unwrap();
+        assert_eq!(rule, NeverTrack::Keyword("Inbox - attorney@example.co.za - Gmail".into()));
+        cfg.add_never_track(&rule);
+        assert_eq!(e.tick(&Sample { at: at(base(), 200), idle_secs: 0.0, window: Some(inbox(14)) }, &cfg), Activity::Excluded);
+    }
+
+    fn tracked(e: &mut Engine, cfg: &Settings, w: &WindowInfo, start: i64) {
+        for i in 0..=20 {
+            e.tick(&Sample { at: at(base(), start + i * 5), idle_secs: 0.0, window: Some(w.clone()) }, cfg);
+        }
+    }
+
+    #[test]
+    fn never_track_rules() {
+        let mut e = Engine::default();
+        let cfg = Settings::default();
+        let doc = word("Settlement.docx", Some("C:\\Clients\\Smit\\Settlement.docx"));
+        let gmail = WindowInfo { app_name: "Google Chrome".into(), title: "(3) Inbox - Gmail".into(), ..Default::default() };
+        let blank = WindowInfo { app_name: "Finder".into(), title: "".into(), ..Default::default() };
+        tracked(&mut e, &cfg, &doc, 0);
+        tracked(&mut e, &cfg, &gmail, 200);
+        tracked(&mut e, &cfg, &blank, 400);
+        let rule = |i: usize, app: bool| e.blocks[i].never_track_rule(app);
+        assert_eq!(rule(0, false), Some(NeverTrack::Keyword("Settlement.docx".into())));
+        assert_eq!(rule(0, true), Some(NeverTrack::App("Microsoft Word".into())));
+        assert_eq!(rule(1, false), Some(NeverTrack::Keyword("Inbox - Gmail".into())));
+        assert_eq!(rule(2, false), None, "no title: only the whole app can be excluded");
+        assert_eq!(rule(2, true), Some(NeverTrack::App("Finder".into())));
+    }
+
+    #[test]
+    fn never_track_removes_matching_activity_and_stops_tracking() {
+        let mut e = Engine::default();
+        let mut cfg = Settings::default();
+        let doc = word("Settlement.docx", Some("/Clients/Smit/Settlement.docx"));
+        let other = word("Memo.docx", Some("/Clients/Botha/Memo.docx"));
+        tracked(&mut e, &cfg, &doc, 0);
+        tracked(&mut e, &cfg, &other, 200);
+        e.blocks[0].synced_version = 3; // already sent to TrusCo
+
+        let rule = e.blocks[0].never_track_rule(false).unwrap();
+        assert!(cfg.add_never_track(&rule));
+        assert!(!cfg.add_never_track(&NeverTrack::Keyword("settlement.DOCX".into())), "no duplicates");
+        assert_eq!(e.drop_excluded(&cfg), (1, 1));
+        assert_eq!(e.blocks.len(), 1);
+        assert_eq!(e.blocks[0].window_title, "Memo.docx");
+
+        // Matched by document path even when the window shows a different title.
+        let renamed = WindowInfo { title: "Document1 - Word".into(), ..doc.clone() };
+        assert_eq!(e.tick(&Sample { at: at(base(), 400), idle_secs: 0.0, window: Some(renamed) }, &cfg), Activity::Excluded);
+
+        assert!(cfg.add_never_track(&NeverTrack::App("Microsoft Word".into())));
+        assert_eq!(e.drop_excluded(&cfg), (1, 0));
+        assert!(e.blocks.is_empty());
     }
 }
