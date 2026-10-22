@@ -16,6 +16,12 @@
   <string>TrusCoTasksWidget</string>
   <key>CFBundlePackageType</key>
   <string>XPC!</string>
+  <key>CFBundleSupportedPlatforms</key>
+  <array>
+    <string>MacOSX</string>
+  </array>
+  <key>DTPlatformName</key>
+  <string>macosx</string>
   <key>CFBundleShortVersionString</key>
   <string>__VERSION__</string>
   <key>CFBundleVersion</key>

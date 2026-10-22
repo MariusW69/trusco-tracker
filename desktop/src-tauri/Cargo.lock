@@ -4538,7 +4538,7 @@ dependencies = [
 
 [[package]]
 name = "tracker-core"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "chrono",
  "core-foundation 0.10.1",
@@ -4578,7 +4578,7 @@ dependencies = [
 
 [[package]]
 name = "trusco-tracker"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "chrono",
  "serde",

@@ -1,6 +1,6 @@
 [package]
 name = "trusco-tracker"
-version = "0.2.0"
+version = "0.2.1"
 description = "TrusCo Tracker: records time per matter for legal billing"
 edition = "2024"
 
@@ -17,7 +17,7 @@ tauri-plugin-autostart = "2.7.0"
 tauri-plugin-opener = "2.7.0"
 tauri-plugin-single-instance = "2.5.2"
 tauri-plugin-window-state = "2.5.0"
-tracker-core = { version = "0.2.0", path = "../core" }
+tracker-core = { version = "0.2.1", path = "../core" }
 
 [build-dependencies]
 tauri-build = { version = "2.7.1", features = [] }
