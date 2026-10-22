@@ -8,5 +8,6 @@ pub mod engine;
 pub mod platform;
 pub mod secrets;
 pub mod store;
+pub mod tasks;
 
 pub use engine::{Activity, Block, Engine, NeverTrack, Sample, Settings, WindowInfo};

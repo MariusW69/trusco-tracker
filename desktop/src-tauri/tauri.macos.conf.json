@@ -1,0 +1,13 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "build": {
+    "beforeBundleCommand": "bash scripts/build-widget.sh"
+  },
+  "bundle": {
+    "macOS": {
+      "files": {
+        "PlugIns/TrusCoTasksWidget.appex": "./widget-build/TrusCoTasksWidget.appex"
+      }
+    }
+  }
+}

@@ -47,10 +47,22 @@ body {
 
 #app {
   padding: 16px;
+  min-height: 100vh;
+}
+
+#shell,
+#tasks-root {
   display: flex;
   flex-direction: column;
   gap: 14px;
-  min-height: 100vh;
+}
+
+#shell:not([hidden]) + #tasks-root:not([hidden]) {
+  margin-top: 14px;
+}
+
+[hidden] {
+  display: none !important;
 }
 
 h1 {
@@ -346,4 +358,236 @@ details summary {
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* ---- Tabs ---- */
+.tabs {
+  display: flex;
+  gap: 4px;
+  background: var(--border);
+  padding: 3px;
+  border-radius: 9px;
+}
+
+.tabs button {
+  flex: 1;
+  border: none;
+  background: transparent;
+  padding: 6px 10px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.tabs button[aria-selected="true"] {
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 8%);
+}
+
+.badge {
+  display: inline-block;
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 11px;
+  line-height: 18px;
+  text-align: center;
+}
+
+/* ---- Tasks ---- */
+:root {
+  --u-overdue: #d92d20;
+  --u-soon: #e08600;
+  --u-later: #98a2a0;
+}
+
+.task-group h2.group-overdue {
+  color: var(--u-overdue);
+}
+
+.task {
+  display: grid;
+  grid-template-columns: auto auto 1fr auto;
+  align-items: center;
+  gap: 2px 8px;
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+}
+
+.list .task:first-child {
+  border-top: none;
+}
+
+.task.hl {
+  background: var(--accent-soft);
+  border-radius: 6px;
+}
+
+.task .check {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--u-later);
+}
+
+.dot.u-overdue {
+  background: var(--u-overdue);
+}
+
+.dot.u-soon,
+.dot.u-today {
+  background: var(--u-soon);
+}
+
+.dot.u-done {
+  background: var(--ok);
+}
+
+.task-title {
+  border: none;
+  background: none;
+  padding: 0;
+  text-align: left;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.task.done .task-title {
+  text-decoration: line-through;
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.flag {
+  color: var(--u-overdue);
+  font-weight: 800;
+}
+
+.due {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.due.u-overdue {
+  color: var(--u-overdue);
+  font-weight: 600;
+}
+
+.due.u-soon {
+  color: var(--u-soon);
+  font-weight: 600;
+}
+
+.task-meta {
+  grid-column: 3 / -1;
+  font-size: 12px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-form select {
+  font: inherit;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  min-width: 0;
+}
+
+.task-form .row input {
+  min-width: 0;
+}
+
+.segmented {
+  display: flex;
+  gap: 4px;
+  background: var(--border);
+  padding: 3px;
+  border-radius: 9px;
+}
+
+.segmented label {
+  position: relative;
+  flex: 1;
+  margin: 0;
+  text-align: center;
+  font-weight: 600;
+  padding: 6px;
+  border-radius: 7px;
+  cursor: pointer;
+}
+
+/* The real radio covers its label invisibly: clickable, focusable and announced as a radio. */
+.segmented input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.segmented label:has(input:checked) {
+  background: var(--surface);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 8%);
+}
+
+.segmented label:has(input:focus-visible) {
+  outline: 2px solid var(--accent);
+}
+
+/* ---- Detached Tasks window ---- */
+body.float #app {
+  padding: 10px 12px;
+}
+
+body.float #tasks-root {
+  gap: 6px;
+}
+
+body.float .task-top strong {
+  font-size: 15px;
+}
+
+body.float .task-group h2 {
+  margin: 8px 0 2px;
+}
+
+body.float .task-form {
+  padding: 10px;
+}
+
+button.icon {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  font-size: 15px;
+  line-height: 1;
+}
+
+body.float .task {
+  grid-template-columns: auto auto 1fr;
+  padding: 6px 0;
+}
+
+body.float .task-meta .due {
+  font-size: 12px;
 }

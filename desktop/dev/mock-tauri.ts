@@ -34,7 +34,65 @@ for (const b of state.blocks) {
   b.never_track_item = item && item.length >= 3 ? item : null;
 }
 
+// Sample tasks for the Tasks tab / detached window (labels are pre-computed by Rust in the real app).
+const projects = [
+  { id: "p1", number: "PRJ-1014", name: "Smit divorce", client: "Jane Smit" },
+  { id: "p2", number: "PRJ-1013", name: "Botha estate", client: "Botha family" },
+  { id: "p3", number: "PRJ-1012", name: "Website refresh", client: null },
+];
+const mk = (id: string, title: string, p: number, extra: any) => ({
+  id, project_id: projects[p].id, project: `${projects[p].number} · ${projects[p].name}`, title, kind: "todo", priority: "normal",
+  done: false, urgency: "upcoming", due_label: "No due date", budget: null, slot: null, due_date: null, due_time: null,
+  slot_date: null, slot_time: null, estimated_hours: 0, ...extra,
+});
+const tasksState: any = {
+  paired: true,
+  projects,
+  synced_at: iso(1),
+  error: null,
+  float_open: false,
+  tasks: [
+    mk("t1", "Call Jane Smit about the settlement offer", 0, { priority: "high", urgency: "overdue", due_label: "Overdue · today 09:00", due_date: "2026-10-22", due_time: "09:00" }),
+    mk("t2", "File founding affidavit", 0, { urgency: "soon", due_label: "Today 14:00 · in 2h", due_date: "2026-10-22", due_time: "14:00" }),
+    mk("t3", "Draft parenting plan", 0, { kind: "time", urgency: "upcoming", due_label: "Fri", due_date: "2026-10-23", budget: "2h 30m", slot: "Tomorrow 09:00–11:30", slot_date: "2026-10-23", slot_time: "09:00", estimated_hours: 2.5 }),
+    mk("t4", "Send fee note to the Botha family", 1, { urgency: "upcoming", due_label: "Mon", due_date: "2026-10-26" }),
+    mk("t5", "Update website copy", 2, { urgency: "no_date" }),
+    mk("t6", "Book counsel for the hearing", 0, { done: true, urgency: "done", due_label: "Overdue · Tue" }),
+  ],
+};
+
 const handlers: Record<string, (a: any) => any> = {
+  get_tasks: () => tasksState,
+  refresh_tasks: () => tasksState,
+  set_task_done: (a) => {
+    const t = tasksState.tasks.find((x: any) => x.id === a.id);
+    t.done = a.done;
+    t.urgency = a.done ? "done" : "upcoming";
+    return tasksState;
+  },
+  save_task: (a) => {
+    const f = a.form;
+    const p = projects.find((x) => x.id === f.project_id)!;
+    const fields = {
+      project_id: p.id, project: `${p.number} · ${p.name}`, title: f.title, kind: f.kind, priority: f.high_priority ? "high" : "normal",
+      due_date: f.due_date, due_time: f.due_time, due_label: f.due_date ? `${f.due_date}${f.due_time ? " " + f.due_time : ""}` : "No due date",
+      urgency: f.due_date ? "upcoming" : "no_date", estimated_hours: f.estimated_hours ?? 0,
+      budget: f.kind === "time" && f.estimated_hours ? `${f.estimated_hours}h` : null,
+      slot_date: f.slot_date, slot_time: f.slot_time, slot: f.slot_date ? `${f.slot_date} ${f.slot_time ?? ""}` : null,
+    };
+    const existing = tasksState.tasks.find((x: any) => x.id === f.id);
+    if (existing) Object.assign(existing, fields);
+    else tasksState.tasks.push(mk(`t${Date.now()}`, f.title, 0, fields));
+    return tasksState;
+  },
+  create_project: (a) => {
+    const p = { id: `p${Date.now()}`, number: `PRJ-10${15 + projects.length}`, name: a.name, client: null };
+    projects.unshift(p);
+    return p;
+  },
+  detach_tasks: () => {
+    window.open("/dev/preview.html?paired=1#float", "tasks-float", "width=300,height=440");
+  },
   never_track: (a) => {
     const blk = state.blocks.find((b: any) => b.id === a.id);
     const rule = a.wholeApp ? { kind: "app", value: blk.app_name } : { kind: "keyword", value: blk.never_track_item };

@@ -40,6 +40,14 @@ impl Store {
         self.save("settings.json", s)
     }
 
+    pub fn load_tasks(&self) -> crate::tasks::TaskCache {
+        self.load("tasks.json").unwrap_or_default()
+    }
+
+    pub fn save_tasks(&self, cache: &crate::tasks::TaskCache) -> std::io::Result<()> {
+        self.save("tasks.json", cache)
+    }
+
     pub fn load_account(&self) -> Option<Account> {
         self.load("account.json")
     }

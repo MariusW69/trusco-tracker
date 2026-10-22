@@ -132,3 +132,50 @@ fn maps_error_statuses() {
     assert!(matches!(client.sync(TOKEN, &[]), Err(ApiError::Unauthorized)));
     assert!(matches!(client.sync(TOKEN, &[]), Err(ApiError::Server(500, _))));
 }
+
+#[test]
+fn tasks_and_projects_round_trip() {
+    let projects = r#"{"projects":[{"id":"p1","number":"PRJ-1014","name":"Website","client":null},{"id":"p2","number":"PRJ-1009","name":"Ampro Refresh","client":"Ampro"}]}"#;
+    let created = r#"{"project":{"id":"p3","number":"PRJ-1015","name":"New thing","client":null}}"#;
+    let tasks = r#"{"tasks":[{"id":"t1","project_id":"p1","project_number":"PRJ-1014","project_name":"Website","title":"Call client back","kind":"todo","priority":"high","status":"todo","due_at":"2026-10-22T13:00:00+00:00","due_date":"2026-10-22","scheduled_at":null,"estimated_hours":0,"completed_at":null,"updated_at":"2026-10-22T08:00:00.123456+00:00"},{"id":"t2","project_id":"p1","project_number":"PRJ-1014","project_name":"Website","title":"Draft proposal","kind":"time","priority":"normal","status":"todo","due_at":null,"due_date":null,"scheduled_at":"2026-10-23T07:00:00+00:00","estimated_hours":2.5,"completed_at":null,"updated_at":"2026-10-22T08:00:00+00:00"}],"server_time":"2026-10-22T10:00:00Z"}"#;
+    let saved = r#"{"task":{"id":"t1","project_id":"p1","project_number":"PRJ-1014","project_name":"Website","title":"Call client back","kind":"todo","priority":"high","status":"done","due_at":"2026-10-22T13:00:00+00:00","due_date":"2026-10-22","scheduled_at":null,"estimated_hours":0,"completed_at":"2026-10-22T10:01:00+00:00","updated_at":"2026-10-22T10:01:00+00:00"}}"#;
+    let (base, seen) = serve(vec![
+        (200, projects),
+        (200, created),
+        (200, tasks),
+        (200, saved),
+        (400, r#"{"error":"invalid_request","message":"invalid task: title must be 1 to 300 characters"}"#),
+        (403, r#"{"error":"forbidden","message":"not allowed to manage tasks in this organization"}"#),
+    ]);
+    let client = Client::new(&base);
+
+    let p = client.projects(TOKEN).map_err(|e| e.to_string()).unwrap();
+    assert_eq!(p.len(), 2);
+    assert_eq!(p[1].client.as_deref(), Some("Ampro"));
+    assert_eq!(seen.recv().unwrap().path, "/api/public/tracker/projects");
+
+    let np = client.create_project(TOKEN, "New thing").map_err(|e| e.to_string()).unwrap();
+    assert_eq!(np.number, "PRJ-1015");
+    let r = seen.recv().unwrap();
+    assert_eq!((r.method.as_str(), r.body["name"].as_str()), ("POST", Some("New thing")));
+
+    let t = client.tasks(TOKEN).map_err(|e| e.to_string()).unwrap();
+    assert_eq!(t.len(), 2);
+    assert_eq!(t[0].due_at.unwrap().to_rfc3339(), "2026-10-22T13:00:00+00:00");
+    assert_eq!(t[1].estimated_hours, 2.5);
+    assert!(t[1].due_at.is_none() && t[1].scheduled_at.is_some());
+    seen.recv().unwrap();
+
+    let done = client
+        .save_task(TOKEN, &serde_json::json!({ "id": "t1", "status": "done" }))
+        .map_err(|e| e.to_string())
+        .unwrap();
+    assert_eq!(done.status, "done");
+    let r = seen.recv().unwrap();
+    assert_eq!((r.path.as_str(), r.body["status"].as_str()), ("/api/public/tracker/tasks", Some("done")));
+
+    let err = client.save_task(TOKEN, &serde_json::json!({ "title": "" })).unwrap_err();
+    assert_eq!(err.to_string(), "Title must be 1 to 300 characters");
+    let err = client.save_task(TOKEN, &serde_json::json!({ "title": "x" })).unwrap_err();
+    assert!(err.to_string().contains("role can't change"), "{err}");
+}

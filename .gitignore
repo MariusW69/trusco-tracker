@@ -6,3 +6,4 @@ releases/
 desktop/src-tauri/gen/
 *.dmg
 *.msi
+desktop/src-tauri/widget-build/

@@ -103,6 +103,8 @@ pub struct Settings {
     pub excluded_keywords: Vec<String>,
     pub paused_until: Option<DateTime<Utc>>,
     pub paused_indefinitely: bool,
+    /// The detached, always-on-top Tasks window was open when the app last ran.
+    pub tasks_float_open: bool,
 }
 
 impl Default for Settings {
@@ -129,6 +131,7 @@ impl Default for Settings {
             excluded_keywords: ["Incognito", "InPrivate", "Private Browsing"].map(String::from).to_vec(),
             paused_until: None,
             paused_indefinitely: false,
+            tasks_float_open: false,
         }
     }
 }

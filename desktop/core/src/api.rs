@@ -1,3 +1,4 @@
+use chrono::{DateTime, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
@@ -11,6 +12,8 @@ pub enum ApiError {
     InvalidCode,
     Server(u16, String),
     Network(String),
+    /// TrusCo refused the request with a reason the user can act on (validation, permissions).
+    Rejected(String),
 }
 
 impl std::fmt::Display for ApiError {
@@ -20,6 +23,7 @@ impl std::fmt::Display for ApiError {
             ApiError::InvalidCode => write!(f, "That code is invalid or has expired"),
             ApiError::Server(code, msg) => write!(f, "TrusCo returned {code}: {msg}"),
             ApiError::Network(msg) => write!(f, "Could not reach TrusCo: {msg}"),
+            ApiError::Rejected(msg) => write!(f, "{msg}"),
         }
     }
 }
@@ -185,6 +189,56 @@ impl Client {
         }
     }
 
+    pub fn projects(&self, token: &str) -> Result<Vec<Project>, ApiError> {
+        #[derive(Deserialize)]
+        struct R {
+            projects: Vec<Project>,
+        }
+        let res = self.http.get(format!("{}/api/public/tracker/projects", self.base)).bearer_auth(token).send().map_err(network)?;
+        read_json::<R>(res).map(|r| r.projects)
+    }
+
+    pub fn create_project(&self, token: &str, name: &str) -> Result<Project, ApiError> {
+        #[derive(Deserialize)]
+        struct R {
+            project: Project,
+        }
+        let res = self
+            .http
+            .post(format!("{}/api/public/tracker/projects", self.base))
+            .bearer_auth(token)
+            .json(&serde_json::json!({ "name": name }))
+            .send()
+            .map_err(network)?;
+        read_json::<R>(res).map(|r| r.project)
+    }
+
+    /// The user's open tasks plus those completed in the last 24 hours.
+    pub fn tasks(&self, token: &str) -> Result<Vec<Task>, ApiError> {
+        #[derive(Deserialize)]
+        struct R {
+            tasks: Vec<Task>,
+        }
+        let res = self.http.get(format!("{}/api/public/tracker/tasks", self.base)).bearer_auth(token).send().map_err(network)?;
+        read_json::<R>(res).map(|r| r.tasks)
+    }
+
+    /// Create (no "id") or update (with "id"; only the keys present change) a task.
+    pub fn save_task(&self, token: &str, task: &serde_json::Value) -> Result<Task, ApiError> {
+        #[derive(Deserialize)]
+        struct R {
+            task: Task,
+        }
+        let res = self
+            .http
+            .post(format!("{}/api/public/tracker/tasks", self.base))
+            .bearer_auth(token)
+            .json(task)
+            .send()
+            .map_err(network)?;
+        read_json::<R>(res).map(|r| r.task)
+    }
+
     pub fn sync(&self, token: &str, blocks: &[BlockPayload]) -> Result<Vec<SyncResult>, ApiError> {
         let res = self
             .http
@@ -198,5 +252,63 @@ impl Client {
             401 => Err(ApiError::Unauthorized),
             s => Err(ApiError::Server(s, res.text().unwrap_or_default())),
         }
+    }
+}
+
+/// A TrusCo project tasks can be added to.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct Project {
+    pub id: String,
+    pub number: String,
+    pub name: String,
+    pub client: Option<String>,
+}
+
+/// A project task as TrusCo returns it (see tracker_task_json).
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct Task {
+    pub id: String,
+    pub project_id: String,
+    pub project_number: String,
+    pub project_name: String,
+    pub title: String,
+    /// "todo" or "time" (needs time allocated).
+    pub kind: String,
+    /// "normal" or "high".
+    pub priority: String,
+    /// "todo", "in_progress" or "done".
+    pub status: String,
+    pub due_at: Option<DateTime<Utc>>,
+    pub due_date: Option<NaiveDate>,
+    pub scheduled_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub estimated_hours: f64,
+    pub completed_at: Option<DateTime<Utc>>,
+}
+
+/// 200 → body; 401 → Unauthorized; 400/403 → Rejected(message from TrusCo); else Server.
+fn read_json<T: serde::de::DeserializeOwned>(res: reqwest::blocking::Response) -> Result<T, ApiError> {
+    match res.status().as_u16() {
+        200 => res.json::<T>().map_err(|e| ApiError::Server(200, e.to_string())),
+        401 => Err(ApiError::Unauthorized),
+        s @ (400 | 403) => {
+            let body: serde_json::Value = res.json().unwrap_or_default();
+            let msg = body["message"].as_str().unwrap_or("TrusCo rejected the request");
+            Err(ApiError::Rejected(friendly(msg, s == 403)))
+        }
+        s => Err(ApiError::Server(s, res.text().unwrap_or_default())),
+    }
+}
+
+/// "invalid task: title must be 1 to 300 characters" -> "Title must be 1 to 300 characters".
+fn friendly(msg: &str, forbidden: bool) -> String {
+    if forbidden {
+        return "Your TrusCo role can't change projects or tasks. Ask an owner or admin.".into();
+    }
+    let rest = msg.split_once(": ").map(|(_, r)| r).unwrap_or(msg).trim();
+    let mut chars = rest.chars();
+    match chars.next() {
+        Some(c) => c.to_uppercase().chain(chars).collect(),
+        None => "TrusCo rejected the request".into(),
     }
 }

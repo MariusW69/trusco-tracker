@@ -29,6 +29,40 @@ TrusCo Tracker runs quietly on a practitioner's Mac or Windows PC. It records wh
 - Nothing becomes billable without that approval.
 - The device key is kept in the macOS Keychain or Windows Credential Manager. Local data files are owner-only.
 
+## Tasks
+
+The tracker can also hold the user's to-do list. These are TrusCo **project tasks** (`project_tasks`), so they also appear on the project page in TrusCo.
+
+**Creating a task:** the user picks an existing project or creates one (numbered with the firm's own prefix and counter, e.g. PRJ-1015) and sets:
+- a due date, with an optional time;
+- a type: **To Do**, or **Allocate time**, which adds a time budget and an optional time slot;
+- an optional **High priority** flag.
+
+**Urgency** is worked out automatically:
+
+| Colour | Meaning |
+|---|---|
+| red | overdue |
+| amber | due today, or due within 3 hours |
+| grey | later |
+
+**Where tasks show:**
+- **Tray menu → Tasks ▸**: **Detach** at the top, then the next 12 open tasks, plus **New task…** and **Show all tasks…**.
+- **Main window → Tasks tab**: Detach, New task, and tasks grouped as Overdue, Today, Upcoming, No due date and Done today. Click a task to edit it; tick it to complete it.
+- **Detach**: a small window that stays on top of other windows and on every desktop Space. It shows tasks, due dates and urgency, and has a quick ＋. It remembers its position and reopens at login if it was open.
+- **Mac desktop widget** (macOS 14+), named **TrusCo Tasks**, in small, medium and large sizes. It is view only, and clicking it opens the Tasks tab.
+  - To add it, right-click the desktop → **Edit Widgets** → TrusCo Tasks.
+  - It is a WidgetKit extension in `desktop/widget/`, built by `scripts/build-widget.sh` and embedded through `src-tauri/tauri.macos.conf.json`.
+  - The app writes `tasks.json` to the App Group folder `H7567N8H2N.app.trusco.tracker` and asks WidgetKit to reload (`src-tauri/swift/WidgetBridge.swift`).
+
+**Which tasks a user sees:** tasks *assigned to them*. New tasks are assigned to their creator; on the web, use the "Assigned to" picker. Completed tasks stay visible for 24 hours.
+
+**API** (bearer device token):
+- `GET` and `POST /api/public/tracker/projects`
+- `GET` and `POST /api/public/tracker/tasks`
+
+Both are backed by the `tracker_*` functions in `trusco/002_tracker_tasks.sql` (TrusCo migration 0072).
+
 ## Matching (server side, `tracker_match_matter`)
 
 Rules are tried in this order:

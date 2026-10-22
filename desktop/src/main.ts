@@ -1,4 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+import { TasksPanel } from "./tasks";
 
 type Account = {
   device_id: string;
@@ -55,7 +57,17 @@ type UiState = {
   launch_at_login: boolean;
 };
 
-const app = document.querySelector<HTMLElement>("#app")!;
+const root = document.querySelector<HTMLElement>("#app")!;
+/** The detached, always-on-top Tasks window loads this page with #float. */
+const floatMode = location.hash === "#float";
+// "shell" holds the re-rendered views; the Tasks panel lives beside it so refreshes never touch its form.
+const app = document.createElement("div");
+app.id = "shell";
+const tasksRoot = document.createElement("div");
+tasksRoot.id = "tasks-root";
+root.append(app, tasksRoot);
+const tasks = new TasksPanel(tasksRoot, floatMode ? "float" : "main");
+let tab: "today" | "tasks" = "today";
 let state: UiState | null = null;
 let view: "main" | "settings" = "main";
 let busy = false;
@@ -108,9 +120,11 @@ async function act<T>(fn: () => Promise<T>) {
 
 function render() {
   if (!state) return;
+  tasksRoot.hidden = !state.paired || view === "settings" || tab !== "tasks";
   if (!state.paired) return renderPair(state);
   if (view === "settings") return renderSettings(state);
   renderMain(state);
+  if (tab === "tasks") tasks.render();
 }
 
 function showNotice(text: string) {
@@ -278,11 +292,18 @@ function renderMain(s: UiState) {
     )
     .join("");
 
-  const html = `
+  const attention = tasks.attentionCount();
+  const header = `
     <div class="row spread">
       <h1>TrusCo Tracker</h1>
       <button class="link" id="settings">Settings</button>
     </div>
+    <nav class="tabs" role="tablist">
+      <button role="tab" data-tab="today" aria-selected="${tab === "today"}">Today</button>
+      <button role="tab" data-tab="tasks" aria-selected="${tab === "tasks"}">Tasks${attention ? ` <span class="badge">${attention}</span>` : ""}</button>
+    </nav>`;
+  const html = `
+    ${header}
     ${
       !s.accessibility
         ? `<div class="banner"><b>Allow Accessibility access</b> so TrusCo Tracker can see which document is open (it never reads the contents).
@@ -291,6 +312,17 @@ function renderMain(s: UiState) {
     }
     ${s.last_sync_error ? `<div class="banner">${esc(s.last_sync_error)}</div>` : ""}
     ${notice ? `<div class="banner info" role="status">${esc(notice)}</div>` : ""}
+    ${tab === "today" ? todayHtml(s, pill, items) : ""}`;
+  // The 3-second poll would otherwise replace the buttons under the pointer and swallow clicks.
+  if (app.dataset.view === "main" && html === lastMainHtml) return;
+  app.dataset.view = "main";
+  lastMainHtml = html;
+  app.innerHTML = html;
+  bindMain();
+}
+
+function todayHtml(s: UiState, pill: string, items: string) {
+  return `
     <section class="card">
       <div class="row spread">${pill}<span class="small muted">Today</span></div>
       <div class="row spread" style="margin-top:8px">
@@ -313,14 +345,20 @@ function renderMain(s: UiState) {
     <footer>
       <div>${esc(s.account?.organization_name)}${s.account?.user_name ? ` · ${esc(s.account.user_name)}` : ""}</div>
       <div>Synced ${ago(s.last_sync)} · <button class="link small" id="sync">Sync now</button></div>
-    </footer>
-  `;
-  // The 3-second poll would otherwise replace the buttons under the pointer and swallow clicks.
-  if (app.dataset.view === "main" && html === lastMainHtml) return;
-  app.dataset.view = "main";
-  lastMainHtml = html;
-  app.innerHTML = html;
+    </footer>`;
+}
 
+function showTab(next: "today" | "tasks") {
+  tab = next;
+  lastMainHtml = "";
+  render();
+  if (next === "tasks") tasks.load();
+}
+
+function bindMain() {
+  app.querySelectorAll<HTMLButtonElement>("[data-tab]").forEach((b) =>
+    b.addEventListener("click", () => showTab(b.dataset.tab as "today" | "tasks")),
+  );
   const on = (id: string, fn: () => void) => app.querySelector(`#${id}`)?.addEventListener("click", fn);
   on("settings", () => {
     view = "settings";
@@ -433,8 +471,35 @@ function renderSettings(s: UiState) {
   });
 }
 
-refresh();
-setInterval(() => {
-  if (document.visibilityState === "visible") refresh();
-}, 3000);
-document.addEventListener("visibilitychange", refresh);
+if (floatMode) {
+  // Detached Tasks window: only the panel, refreshed when tasks change and every 30 s (labels age).
+  document.body.classList.add("float");
+  app.hidden = true;
+  tasksRoot.hidden = false;
+  tasks.load();
+  listen("tasks-changed", () => tasks.load());
+  setInterval(() => tasks.load(), 30000);
+} else {
+  listen("tasks-changed", () => {
+    tasks.load().then(() => {
+      lastMainHtml = "";
+      render();
+    });
+  });
+  // From the tray: "tasks", "tasks-new" or "task:<id>".
+  listen<string>("navigate", (e) => {
+    view = "main";
+    showTab("tasks");
+    tasks.load().then(() => tasks.navigate(e.payload));
+  });
+  tasks.load();
+  startMain();
+}
+
+function startMain() {
+  refresh();
+  setInterval(() => {
+    if (document.visibilityState === "visible") refresh();
+  }, 3000);
+  document.addEventListener("visibilitychange", refresh);
+}

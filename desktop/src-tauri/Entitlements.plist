@@ -4,5 +4,10 @@
 <dict>
   <key>com.apple.security.automation.apple-events</key>
   <true/>
+  <!-- Shared with the TrusCo Tasks widget: the app writes tasks.json there. -->
+  <key>com.apple.security.application-groups</key>
+  <array>
+    <string>H7567N8H2N.app.trusco.tracker</string>
+  </array>
 </dict>
 </plist>

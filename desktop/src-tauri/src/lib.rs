@@ -2,6 +2,9 @@
 //! the foreground window every few seconds, a sync thread that sends finished work
 //! blocks to TrusCo, and a small window for pairing, today's activity and settings.
 
+mod tasks_ui;
+mod widget;
+
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Mutex, MutexGuard};
 use std::thread;
@@ -19,6 +22,7 @@ use tauri_plugin_opener::OpenerExt as _;
 use tracker_core::api::{self, ApiError, BlockPayload};
 use tracker_core::platform::{self, Sampler};
 use tracker_core::store::{Account, Store};
+use tracker_core::tasks::TaskCache;
 use tracker_core::{Activity, Block, Engine, NeverTrack, Sample, Settings, WindowInfo, secrets};
 
 const SAMPLE_EVERY: Duration = Duration::from_secs(5);
@@ -35,6 +39,8 @@ struct Inner {
     current: Option<WindowInfo>,
     last_sync: Option<DateTime<Utc>>,
     last_sync_error: Option<String>,
+    tasks: TaskCache,
+    tasks_error: Option<String>,
 }
 
 struct AppState {
@@ -71,6 +77,8 @@ pub fn run() {
             Some(vec!["--background"]),
         ))
         .plugin(tauri_plugin_opener::init())
+        // Remembers where the detached Tasks window was placed.
+        .plugin(tauri_plugin_window_state::Builder::default().with_denylist(&["main"]).build())
         .invoke_handler(tauri::generate_handler![
             get_state,
             default_device_name,
@@ -84,12 +92,20 @@ pub fn run() {
             open_review,
             remove_block,
             never_track,
+            tasks_ui::get_tasks,
+            tasks_ui::refresh_tasks,
+            tasks_ui::save_task,
+            tasks_ui::set_task_done,
+            tasks_ui::create_project,
+            tasks_ui::detach_tasks,
+            tasks_ui::open_tasks_in_main,
         ])
         .setup(|app| {
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
 
             let store = Store::new(app.path().app_data_dir()?)?;
+            let tasks = store.load_tasks();
             let token = secrets::load_token();
             let paired = token.is_some();
             let (tx, rx) = mpsc::channel();
@@ -103,6 +119,8 @@ pub fn run() {
                     current: None,
                     last_sync: None,
                     last_sync_error: None,
+                    tasks,
+                    tasks_error: None,
                 }),
                 store,
                 sync_tx: Mutex::new(tx),
@@ -110,28 +128,47 @@ pub fn run() {
             build_tray(app.handle())?;
             spawn_tracker(app.handle().clone());
             spawn_sync(app.handle().clone(), rx);
+            tasks_ui::write_widget(app.handle());
+            let reopen_float = app.state::<AppState>().lock().settings.tasks_float_open;
             if !paired {
                 show_window(app.handle());
+            } else if reopen_float {
+                tasks_ui::open_float(app.handle());
             }
             Ok(())
         })
         .on_window_event(|window, event| {
-            // Closing the window only hides it; tracking carries on in the tray.
             if let WindowEvent::CloseRequested { api, .. } = event {
-                api.prevent_close();
-                let _ = window.hide();
+                if window.label() == tasks_ui::FLOAT_LABEL {
+                    // Closed by the user: don't bring it back at the next start.
+                    tasks_ui::set_float_open(window.app_handle(), false);
+                } else {
+                    // Closing the main window only hides it; tracking carries on in the tray.
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
             }
         })
         .build(tauri::generate_context!())
         .expect("error while building TrusCo Tracker")
-        .run(|app, event| {
-            if let RunEvent::ExitRequested { api, code, .. } = event {
+        .run(|app, event| match event {
+            RunEvent::ExitRequested { api, code, .. } => {
                 if code.is_none() {
                     api.prevent_exit();
                 } else {
                     save_now(app);
                 }
             }
+            // trusco-tracker://tasks — the macOS widget opens the app on the Tasks tab.
+            #[cfg(target_os = "macos")]
+            RunEvent::Opened { urls } => {
+                if urls.iter().any(|u| u.scheme() == "trusco-tracker") {
+                    tasks_ui::open_main(app, "tasks");
+                }
+            }
+            #[cfg(target_os = "macos")]
+            RunEvent::Reopen { .. } => show_window(app),
+            _ => {}
         });
 }
 
@@ -180,6 +217,7 @@ fn spawn_tracker(app: AppHandle) {
                     }
                 }
                 refresh_tray(&app);
+                tasks_ui::refresh_menu(&app);
                 thread::sleep(SAMPLE_EVERY);
             }
         })
@@ -191,8 +229,11 @@ fn spawn_sync(app: AppHandle, rx: Receiver<()>) {
         .name("sync".into())
         .spawn(move || {
             refresh_account(&app);
+            let mut round: u32 = 0;
             loop {
                 while sync_once(&app) {}
+                sync_tasks(&app, round);
+                round = round.wrapping_add(1);
                 let _ = rx.recv_timeout(SYNC_EVERY);
                 while rx.try_recv().is_ok() {}
             }
@@ -242,6 +283,21 @@ fn sync_once(app: &AppHandle) -> bool {
     }
 }
 
+/// Refreshes the user's tasks every round, and the project list every tenth round.
+fn sync_tasks(app: &AppHandle, round: u32) {
+    let state = app.state::<AppState>();
+    let (paired, no_projects) = {
+        let s = state.lock();
+        (s.token.is_some(), s.tasks.projects.is_empty())
+    };
+    if !paired {
+        return;
+    }
+    if let Err(e) = tasks_ui::fetch(app, round % 10 == 0 || no_projects) {
+        state.lock().tasks_error = Some(e);
+    }
+}
+
 /// Picks up renamed devices / organizations; detects a revoked token at start-up.
 fn refresh_account(app: &AppHandle) {
     let state = app.state::<AppState>();
@@ -273,10 +329,16 @@ fn forget_device(app: &AppHandle, reason: &str) {
         s.engine = Engine::default();
         s.current = None;
         s.last_sync_error = Some(reason.to_string());
+        s.tasks = TaskCache::default();
         let _ = state.store.save_engine(&s.engine);
+        let _ = state.store.save_tasks(&s.tasks);
     }
     let _ = state.store.save_account(None);
+    if let Some(w) = app.get_webview_window(tasks_ui::FLOAT_LABEL) {
+        let _ = w.destroy();
+    }
     refresh_tray(app);
+    tasks_ui::changed(app);
     show_window(app);
 }
 
@@ -304,9 +366,11 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let sep1 = PredefinedMenuItem::separator(app)?;
     let sep2 = PredefinedMenuItem::separator(app)?;
     let sep3 = PredefinedMenuItem::separator(app)?;
+    let sep4 = PredefinedMenuItem::separator(app)?;
+    let tasks = tasks_ui::build_submenu(app)?;
     let menu = Menu::with_items(
         app,
-        &[&status, &today, &sep1, &pause_15, &pause_60, &pause_toggle, &sep2, &open, &review, &sep3, &quit],
+        &[&status, &today, &sep1, &tasks, &sep4, &pause_15, &pause_60, &pause_toggle, &sep2, &open, &review, &sep3, &quit],
     )?;
 
     let icon = TrayIconBuilder::with_id("main")
@@ -325,7 +389,9 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
             "open" => show_window(app),
             "review" => open_review_page(app),
             "quit" => app.exit(0),
-            _ => {}
+            other => {
+                tasks_ui::on_menu(app, other);
+            }
         })
         .build(app)?;
 
