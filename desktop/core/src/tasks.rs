@@ -3,7 +3,7 @@
 
 use chrono::{DateTime, Duration, Local, NaiveDate, SecondsFormat, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::api::{Project, Task};
 
@@ -11,6 +11,8 @@ use crate::api::{Project, Task};
 pub const DUE_SOON_HOURS: i64 = 3;
 
 /// Shared with the widget extension; team-ID prefixed so no provisioning profile is needed.
+/// Get its folder from macOS (`widget::group_dir` in the app), never by building the path:
+/// macOS 15+ blocks writes to a hand-built group container path.
 pub const APP_GROUP: &str = "H7567N8H2N.app.trusco.tracker";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize)]
@@ -234,15 +236,6 @@ pub fn widget_snapshot(tasks: &[Task], paired: bool, now: DateTime<Local>) -> Wi
             })
             .collect(),
     }
-}
-
-/// ~/Library/Group Containers/<group>/ on macOS; widgets don't exist elsewhere.
-pub fn widget_dir() -> Option<PathBuf> {
-    if !cfg!(target_os = "macos") {
-        return None;
-    }
-    let home = std::env::var_os("HOME")?;
-    Some(Path::new(&home).join("Library/Group Containers").join(APP_GROUP))
 }
 
 pub fn write_widget_snapshot(dir: &Path, snapshot: &WidgetSnapshot) -> std::io::Result<()> {

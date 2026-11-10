@@ -53,7 +53,8 @@ The tracker can also hold the user's to-do list. These are TrusCo **project task
 - **Mac desktop widget** (macOS 14+), named **TrusCo Tasks**, in small, medium and large sizes. It is view only, and clicking it opens the Tasks tab.
   - To add it, right-click the desktop → **Edit Widgets** → TrusCo Tasks.
   - It is a WidgetKit extension in `desktop/widget/`, built by `scripts/build-widget.sh` and embedded through `src-tauri/tauri.macos.conf.json`.
-  - The app writes `tasks.json` to the App Group folder `H7567N8H2N.app.trusco.tracker` and asks WidgetKit to reload (`src-tauri/swift/WidgetBridge.swift`).
+  - The app gets the App Group folder `H7567N8H2N.app.trusco.tracker` from macOS (`containerURL(forSecurityApplicationGroupIdentifier:)`), writes `tasks.json` there and asks WidgetKit to reload. Both calls are in `src-tauri/swift/WidgetBridge.swift`.
+  - Never build that folder's path by hand. macOS 15+ treats a write to the hand-built path as access to another app's data and blocks it. Asking macOS for the folder is what makes it check the signature and grant access.
 
 **Which tasks a user sees:** tasks *assigned to them*. New tasks are assigned to their creator; on the web, use the "Assigned to" picker. Completed tasks stay visible for 24 hours.
 

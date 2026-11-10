@@ -404,13 +404,14 @@ pub(crate) fn on_menu(app: &AppHandle, id: &str) -> bool {
 // ---------------------------------------------------------------------------
 
 pub(crate) fn write_widget(app: &AppHandle) {
-    let Some(dir) = t::widget_dir() else { return };
+    let Some(dir) = crate::widget::group_dir() else { return };
     let snapshot = {
         let state = app.state::<AppState>();
         let s = state.lock();
         t::widget_snapshot(&s.tasks.tasks, s.token.is_some(), Local::now())
     };
-    if t::write_widget_snapshot(&dir, &snapshot).is_ok() {
-        crate::widget::reload();
+    match t::write_widget_snapshot(&dir, &snapshot) {
+        Ok(()) => crate::widget::reload(),
+        Err(e) => eprintln!("TrusCo Tasks widget: couldn't write its task list: {e}"),
     }
 }
