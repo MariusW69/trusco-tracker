@@ -336,7 +336,10 @@ function todayHtml(s: UiState, pill: string, items: string) {
             : `<span class="small muted">Pause</span><button id="p15">15 min</button><button id="p60">1 hour</button><button id="pinf">Until I resume</button>`
         }
       </div>
-      <button class="primary" id="review" style="width:100%;margin-top:10px">Review in TrusCo</button>
+      <div class="row" style="gap:8px;margin-top:10px">
+        <button class="primary" id="review" style="flex:1">Review in TrusCo</button>
+        <button id="report" title="Report on any date range, with PDF and Excel export">Time report</button>
+      </div>
     </section>
     <section class="card">
       <h2>Today's activity</h2>
@@ -370,6 +373,7 @@ function bindMain() {
   on("p60", () => act(() => invoke("pause", { minutes: 60 })));
   on("pinf", () => act(() => invoke("pause", { minutes: null })));
   on("review", () => invoke("open_review"));
+  on("report", () => invoke("open_report"));
   on("sync", () => act(() => invoke("sync_now")));
   app.querySelectorAll<HTMLButtonElement>("[data-never]").forEach((b) =>
     b.addEventListener("click", () => {

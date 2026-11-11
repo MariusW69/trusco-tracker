@@ -90,6 +90,7 @@ pub fn run() {
             request_accessibility,
             sync_now,
             open_review,
+            open_report,
             remove_block,
             never_track,
             tasks_ui::get_tasks,
@@ -362,6 +363,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let pause_toggle = MenuItem::with_id(app, "pause", "Pause until I resume", true, None::<&str>)?;
     let open = MenuItem::with_id(app, "open", "Show today's activity…", true, None::<&str>)?;
     let review = MenuItem::with_id(app, "review", "Review in TrusCo…", true, None::<&str>)?;
+    let report = MenuItem::with_id(app, "report", "Time report…", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit TrusCo Tracker", true, None::<&str>)?;
     let sep1 = PredefinedMenuItem::separator(app)?;
     let sep2 = PredefinedMenuItem::separator(app)?;
@@ -370,7 +372,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let tasks = tasks_ui::build_submenu(app)?;
     let menu = Menu::with_items(
         app,
-        &[&status, &today, &sep1, &tasks, &sep4, &pause_15, &pause_60, &pause_toggle, &sep2, &open, &review, &sep3, &quit],
+        &[&status, &today, &sep1, &tasks, &sep4, &pause_15, &pause_60, &pause_toggle, &sep2, &open, &review, &report, &sep3, &quit],
     )?;
 
     let icon = TrayIconBuilder::with_id("main")
@@ -388,6 +390,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
             }
             "open" => show_window(app),
             "review" => open_review_page(app),
+            "report" => open_report_page(app),
             "quit" => app.exit(0),
             other => {
                 tasks_ui::on_menu(app, other);
@@ -483,8 +486,17 @@ fn show_window(app: &AppHandle) {
 }
 
 fn open_review_page(app: &AppHandle) {
+    open_trusco(app, "/captured-time");
+}
+
+/// Captured Time's date-range report (pick From/To, export PDF or Excel).
+fn open_report_page(app: &AppHandle) {
+    open_trusco(app, "/captured-time?view=report");
+}
+
+fn open_trusco(app: &AppHandle, path: &str) {
     let server = app.state::<AppState>().lock().settings.server_url.clone();
-    let _ = app.opener().open_url(format!("{server}/captured-time"), None::<&str>);
+    let _ = app.opener().open_url(format!("{server}{path}"), None::<&str>);
 }
 
 // ---------------------------------------------------------------------------
@@ -699,6 +711,11 @@ fn sync_now(app: AppHandle) {
 #[tauri::command]
 fn open_review(app: AppHandle) {
     open_review_page(&app);
+}
+
+#[tauri::command]
+fn open_report(app: AppHandle) {
+    open_report_page(&app);
 }
 
 /// Lets the user drop something private before it is sent (already-sent items are discarded in TrusCo).

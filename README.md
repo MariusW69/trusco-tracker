@@ -25,7 +25,7 @@ TrusCo Tracker runs quietly on a practitioner's Mac or Windows PC. It records wh
 | Start/end time and *active* time (idle over 5 min is excluded; calls and meetings are exempt) | Anything while paused, in excluded apps (password managers by default) or in private browser windows |
 
 - Blocks shorter than 1 minute stay on the computer.
-- In TrusCo, captured activity is visible only to the user who recorded it until they approve it.
+- In TrusCo, only the user who recorded the activity can review, assign, discard or approve it. The firm's owners and admins can see it read-only in the Captured Time report (below).
 - Nothing becomes billable without that approval.
 - The device key is kept in the macOS Keychain or Windows Credential Manager. Local data files are owner-only.
 
@@ -63,6 +63,25 @@ The tracker can also hold the user's to-do list. These are TrusCo **project task
 - `GET` and `POST /api/public/tracker/tasks`
 
 Both are backed by the `tracker_*` functions in `trusco/002_tracker_tasks.sql` (TrusCo migration 0072).
+
+## Report
+
+TrusCo's **Captured Time → Report** covers any date range of up to one year. The tracker's **Time report…** tray item and the **Time report** button on the Today tab open it.
+
+**Breakdowns:**
+- by matter, then document;
+- daily totals;
+- by app;
+- billing status and value (pending, in time entries, discarded).
+
+**Exports:** PDF and Excel.
+
+**Who sees what:**
+- Members report on their own activity.
+- The firm's own owners and admins (`is_org_admin`) can report on anyone, or on everyone at once.
+- TrusCo platform admins get no extra access.
+
+The report comes from two read-only functions, `tracker_activity_report` and `tracker_report_people`, in `trusco/003_tracker_report.sql`. The `activity_blocks` RLS still limits raw rows to their owner.
 
 ## Matching (server side, `tracker_match_matter`)
 
